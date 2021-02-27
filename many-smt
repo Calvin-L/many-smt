@@ -5,6 +5,7 @@ import selectors
 import subprocess
 import sys
 import re
+import io
 
 # ----------------------------------------------------------------------
 # Configuration
@@ -18,6 +19,7 @@ DEBUG = False
 
 def emit_output(output):
     print(output)
+    sys.stdout.flush()
 
 def output_error(message):
     emit_output('(error "{}")'.format(message))
@@ -288,7 +290,9 @@ def run(argv):
 
     # -------------------------------------------------
 
-    while block := sys.stdin.buffer.read(1024):
+    stdin_unbuffered = io.open(sys.stdin.fileno(), 'rb', closefd=False, buffering=0)
+
+    while block := stdin_unbuffered.read(1024):
 
         if not block:
             break
