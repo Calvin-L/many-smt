@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+
+import argparse
+import selectors
+import subprocess
+import sys
+import re
+
+# ----------------------------------------------------------------------
+# Configuration
+
+SMTLIB_CHARSET = "ascii" # NOTE: hardcoded elsewhere as well
+BUFFER_SIZE = 1024
+DEBUG = False
+
+# ----------------------------------------------------------------------
+# Output
+
+def emit_output(output):
+    print(output)
+
+def output_error(message):
+    emit_output('(error "{}")'.format(message))
+
+def die(message):
+    output_error(message)
+    sys.exit(1)
+
+def set_debug(dbg):
+    global DEBUG
+    DEBUG = dbg
+
+def log(s):
+    print(s, file=sys.stderr)
+
+def log_warning(s):
+    log("WARNING: {}".format(s))
+
+def log_note(s):
+    log(s)
+
+def log_debug(s):
+    if DEBUG:
+        log(s)
+
+# ----------------------------------------------------------------------
+# Input parsing
+
+class IncrementalSExpParser(object):
+    __slots__ = ("so_far", "in_comment", "in_naked_atom", "paren_depth")
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.so_far = ""
+        self.paren_depth = 0
+        self.in_comment = False
+        self.in_naked_atom = False
+
+    def feed(self, text_bytes):
+        """
+        Feed the given bytes to this parser, and return S-expressions found.
+
+        This method is incremental; S-expressions may be split across multiple
+        calls.
+        """
+        return list(self._feed(text_bytes))
+
+    def _finish(self):
+        result = self.so_far.strip()
+        self.reset()
+        return result
+
+
+    def _feed(self, text_bytes):
+        for c in text_bytes:
+            c = chr(c) # NOTE: assuming ASCII charset
+            if self.in_comment:
+                if c == "\n":
+                    self.in_comment = False
+            else:
+                if c == ";":
+                    if self.in_naked_atom:
+                        yield self._finish()
+                    self.in_comment = True
+                else:
+                    self.so_far += c
+                    if c == "(":
+                        self.paren_depth += 1
+                    elif c == ")":
+                        self.paren_depth -= 1
+                        if self.paren_depth == 0:
+                            yield self._finish()
+                    elif c in " \t\r\n":
+                        if self.in_naked_atom:
+                            yield self._finish()
+                    elif self.paren_depth == 0:
+                        self.in_naked_atom = True
+
+CHECK_SAT_RE = re.compile(r"^\(\s*check-sat(:?-assuming)?.*\)$", re.DOTALL)
+def is_check_sat(sexp):
+    return bool(CHECK_SAT_RE.match(sexp))
+
+INSPECT_COMMAND_RE = re.compile(r"^\(\s*(:?get-value|get-assignment|get-model|get-unsat-assumptions|get-proof|get-unsat-core).*\)$", re.DOTALL)
+def is_inspect_command(sexp):
+    return bool(INSPECT_COMMAND_RE.match(sexp))
+
+IS_ERROR = re.compile(r"^\(\s*error.*\)$", re.DOTALL)
+def is_error(sexp):
+    return bool(IS_ERROR.match(sexp))
+
+# ----------------------------------------------------------------------
+# Solver processes
+
+class SolverProcess(object):
+    def __init__(self, args):
+        self.alive = False
+        self.args = args
+        self.re_open()
+
+    def __str__(self):
+        return self.args[0]
+
+    def close(self):
+        # NOTE: if Popen throws an exception, self.proc is never set.
+        if self.alive and hasattr(self, "proc"):
+            log_debug("Stopping {}".format(self))
+            self.proc.kill()
+            self.alive = False
+            self.inbox = None
+
+    def re_open(self):
+        assert not self.alive
+        self.alive = True
+        self.proc = subprocess.Popen(self.args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+        self.inbox = IncrementalSExpParser()
+
+    def send(self, cmd):
+        if self.alive:
+            try:
+                log_debug("{} <-- {!r}".format(self, cmd))
+                cmd_bytes = cmd.encode(SMTLIB_CHARSET)
+                written = 0
+                while written < len(cmd_bytes):
+                    written += self.proc.stdin.write(cmd_bytes[written:])
+                self.proc.stdin.flush()
+            except Exception as e:
+                log_warning("Error while writing to {}: {}".format(self, e))
+                self.close()
+
+    def abort_check_sat(self, commands_so_far):
+        log_debug("Aborting {} (check-sat)".format(self))
+        self.close()
+        try:
+            self.re_open()
+            for cmd in commands_so_far:
+                self.send(cmd)
+                sync([self])
+            self.send('(echo "aborted")\n')
+        except Exception as e:
+            log_warning("Error from {} while replaying commands after abort: {}".format(self, e))
+            self.close()
+
+    def make_read_progress(self):
+        if not self.alive:
+            log_warning("Tried to read from dead solver {}".format(self))
+            yield "error"
+            return
+        try:
+            block = self.proc.stdout.read(BUFFER_SIZE)
+            if block:
+                for out in self.inbox.feed(block):
+                    log_debug("{} --> {!r}".format(self, out))
+                    yield out
+            else:
+                log_debug("Solver {} has stopped sending output".format(self))
+                self.close()
+        except Exception as e:
+            log_warning("Error while reading from {}: {}".format(self, e))
+            self.close()
+
+    def __del__(self):
+        self.close()
+
+class CVC4(SolverProcess):
+    def __init__(self):
+        super().__init__(["cvc4", "--lang=smtlib2.6", "--incremental"])
+
+class Z3(SolverProcess):
+    def __init__(self):
+        super().__init__(["z3", "-smt2", "-in"])
+
+    # NOTE: while checking satisfiability, Z3 handles SIGINT by stopping and
+    # printing "unknown".  However, a SIGINT signal that arrives at other times
+    # will cause it to terminate.  If it is not checking satisfiability when it
+    # gets the signal, it dies!  Therefore, even though this looks like it
+    # should work, it does not. :(
+    #
+    # def abort_check_sat(self, commands_so_far):
+    #     if self.alive:
+    #         self.proc.send_signal(signal.SIGINT)
+
+class Yices(SolverProcess):
+    def __init__(self):
+        super().__init__(["yices-smt2", "--incremental"])
+
+ALL_KNOWN_SOLVERS = [CVC4, Yices, Z3]
+
+# ----------------------------------------------------------------------
+# Batch commands for interacting with multiple solvers
+
+def next_response(solvers):
+    """
+    Returns the first complete S-expression output by any of the given solvers.
+
+    Blocks until at least one solver produces a complete S-expression.
+    """
+    with selectors.DefaultSelector() as sel:
+        for s in solvers:
+            sel.register(s.proc.stdout, selectors.EVENT_READ, data=s)
+        while True:
+            log_debug("Waiting [next_response]...")
+            for selectkey, events in sel.select():
+                solver = selectkey.data
+                for res in solver.make_read_progress():
+                    return (solver, res)
+
+def sync(solvers):
+    """
+    Wait until all the given solvers output a complete S-expression.
+
+    Closes any solvers that report an error.
+    """
+    n = len(solvers)
+    with selectors.DefaultSelector() as sel:
+        for s in solvers:
+            sel.register(s.proc.stdout, selectors.EVENT_READ, data=s)
+        while n > 0:
+            log_debug("Waiting [sync]...")
+            for selectkey, events in sel.select():
+                solver = selectkey.data
+                for res in solver.make_read_progress():
+                    sel.unregister(selectkey.fileobj)
+                    n -= 1
+                    if is_error(res):
+                        log_warning("Solver {} reports error {!r}".format(solver, res))
+                        solver.close()
+                    break
+
+# ----------------------------------------------------------------------
+# Program entry point
+
+def run(argv):
+    p = argparse.ArgumentParser(description='Run multiple SMT solvers in parallel.')
+    p.add_argument("--debug", action="store_true")
+    args = p.parse_args(argv)
+
+    if args.debug:
+        set_debug(True)
+
+    solvers = []
+    for Constructor in ALL_KNOWN_SOLVERS:
+        try:
+            solver = Constructor()
+            solvers.append(solver)
+            log_note("Started solver {}".format(solver))
+        except FileNotFoundError:
+            log_warning("Solver {} not found".format(Constructor.__name__))
+
+    ENABLE_PRINT_SUCCESS = "(set-option :print-success true)\n"
+    for s in solvers:
+        s.send(ENABLE_PRINT_SUCCESS)
+    sync(solvers)
+
+    # --------------------- STATE ---------------------
+
+    # Incremental parser for input commands.
+    p = IncrementalSExpParser()
+
+    # Solver with a staisfying model.
+    satisfied_solver = None
+
+    # Commands that "matter".  Some solvers can't be interrupted while checking
+    # for satisfiability; for those solvers, we kill them and then replay these
+    # commands in order.
+    commands_so_far = [ENABLE_PRINT_SUCCESS]
+
+    # -------------------------------------------------
+
+    while block := sys.stdin.buffer.read(1024):
+
+        if not block:
+            break
+
+        for sexp in p.feed(block):
+            solvers = [s for s in solvers if s.alive]
+
+            if not solvers:
+                die("No solvers are available")
+
+            log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
+
+            # Some solvers might be line-buffered, in which case we should
+            # politely give them a newline.
+            sexp = sexp + "\n"
+
+            if is_check_sat(sexp):
+                for s in solvers:
+                    s.send(sexp)
+
+                waiting_solvers = list(solvers)
+                while waiting_solvers:
+                    solver, res = next_response(waiting_solvers)
+                    log_note("Solver {} responded with {}".format(solver, res))
+                    waiting_solvers.remove(solver)
+                    if is_error(res):
+                        solver.close()
+                    elif res != "unknown":
+                        emit_output(res)
+                        if res == "sat":
+                            satisfied_solver = solver
+                        break
+                if waiting_solvers:
+                    for s in waiting_solvers:
+                        s.abort_check_sat(commands_so_far)
+                else:
+                    emit_output("unknown")
+                sync(waiting_solvers)
+            elif is_inspect_command(sexp):
+                if satisfied_solver is not None:
+                    satisfied_solver.send(sexp)
+                    _, res = next_response([satisfied_solver])
+                    emit_output(res)
+                else:
+                    output_error("No model is available")
+            else:
+                for s in solvers:
+                    s.send(sexp)
+                commands_so_far.append(sexp)
+                satisfied_solver = None
+                sync(solvers)
+
+if __name__ == "__main__":
+    run(sys.argv[1:])
