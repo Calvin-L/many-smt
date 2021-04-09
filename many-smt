@@ -4,7 +4,6 @@ import argparse
 import selectors
 import subprocess
 import sys
-import re
 import io
 
 # ----------------------------------------------------------------------
@@ -45,20 +44,32 @@ def log_debug(s):
     if DEBUG:
         log(s)
 
+def serialize_sexp(s):
+    if isinstance(s, str):
+        return s
+    else:
+        return '(' + ' '.join(serialize_sexp(x) for x in s) + ')'
+
 # ----------------------------------------------------------------------
 # Input parsing
 
 class IncrementalSExpParser(object):
-    __slots__ = ("so_far", "in_comment", "in_naked_atom", "paren_depth")
+    __slots__ = (
+        "incomplete_sexp",
+        "incomplete_atom",
+        "in_comment",
+        "in_naked_atom",
+        "paren_depth")
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.so_far = ""
-        self.paren_depth = 0
+        self.incomplete_sexp = []
+        self.incomplete_atom = ""
         self.in_comment = False
         self.in_naked_atom = False
+        self.paren_depth = 0
 
     def feed(self, text_bytes):
         """
@@ -70,10 +81,17 @@ class IncrementalSExpParser(object):
         return list(self._feed(text_bytes))
 
     def _finish(self):
-        result = self.so_far.strip()
+        if self.incomplete_sexp:
+            result, = self.incomplete_sexp
+        else:
+            result = self.incomplete_atom
         self.reset()
         return result
 
+    def _finish_atom(self):
+        if self.incomplete_atom and self.incomplete_sexp:
+            self.incomplete_sexp[-1].append(self.incomplete_atom)
+            self.incomplete_atom = ""
 
     def _feed(self, text_bytes):
         for c in text_bytes:
@@ -83,34 +101,42 @@ class IncrementalSExpParser(object):
                     self.in_comment = False
             else:
                 if c == ";":
+                    self._finish_atom()
                     if self.in_naked_atom:
                         yield self._finish()
                     self.in_comment = True
                 else:
-                    self.so_far += c
                     if c == "(":
+                        self._finish_atom()
+                        if self.in_naked_atom:
+                            yield self._finish()
+                        self.incomplete_sexp.append([])
                         self.paren_depth += 1
                     elif c == ")":
+                        self._finish_atom()
                         self.paren_depth -= 1
                         if self.paren_depth == 0:
                             yield self._finish()
+                        else:
+                            self.incomplete_sexp[-2].append(self.incomplete_sexp[-1])
+                            self.incomplete_sexp.pop()
                     elif c in " \t\r\n":
+                        self._finish_atom()
                         if self.in_naked_atom:
                             yield self._finish()
-                    elif self.paren_depth == 0:
-                        self.in_naked_atom = True
+                    else:
+                        self.incomplete_atom += c
+                        if self.paren_depth == 0:
+                            self.in_naked_atom = True
 
-CHECK_SAT_RE = re.compile(r"^\(\s*check-sat(:?-assuming)?.*\)$", re.DOTALL)
 def is_check_sat(sexp):
-    return bool(CHECK_SAT_RE.match(sexp))
+    return isinstance(sexp, list) and sexp[0] in ("check-sat", "check-sat-assuming")
 
-INSPECT_COMMAND_RE = re.compile(r"^\(\s*(:?get-value|get-assignment|get-model|get-unsat-assumptions|get-proof|get-unsat-core).*\)$", re.DOTALL)
 def is_inspect_command(sexp):
-    return bool(INSPECT_COMMAND_RE.match(sexp))
+    return isinstance(sexp, list) and sexp[0] in ("get-value", "get-assignment", "get-model", "get-unsat-assumptions", "get-proof", "get-unsat-core")
 
-IS_ERROR = re.compile(r"^\(\s*error.*\)$", re.DOTALL)
 def is_error(sexp):
-    return bool(IS_ERROR.match(sexp))
+    return isinstance(sexp, list) and sexp[0] == "error"
 
 # ----------------------------------------------------------------------
 # Solver processes
@@ -304,14 +330,15 @@ def run(argv):
                 die("No solvers are available")
 
             log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
+            sexp_str = serialize_sexp(sexp)
 
             # Some solvers might be line-buffered, in which case we should
             # politely give them a newline.
-            sexp = sexp + "\n"
+            sexp_str += "\n"
 
             if is_check_sat(sexp):
                 for s in solvers:
-                    s.send(sexp)
+                    s.send(sexp_str)
 
                 waiting_solvers = list(solvers)
                 while waiting_solvers:
@@ -333,15 +360,15 @@ def run(argv):
                 sync(waiting_solvers)
             elif is_inspect_command(sexp):
                 if satisfied_solver is not None:
-                    satisfied_solver.send(sexp)
+                    satisfied_solver.send(sexp_str)
                     _, res = next_response([satisfied_solver])
-                    emit_output(res)
+                    emit_output(serialize_sexp(res))
                 else:
                     output_error("No model is available")
             else:
                 for s in solvers:
-                    s.send(sexp)
-                commands_so_far.append(sexp)
+                    s.send(sexp_str)
+                commands_so_far.append(sexp_str)
                 satisfied_solver = None
                 sync(solvers)
 
