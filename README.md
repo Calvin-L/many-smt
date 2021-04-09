@@ -53,14 +53,14 @@ Some commands are handled specially:
    solver's output is returned unaltered.  Because different solvers output
    models in different formats, the output of these commands can be surprising!
 
-Many commands are currently _incorrectly handled_.  In particular, commands
-that should produce output like `echo` do not.  Also, the `:print-success`
-option is not supported and is always false (in violation of the SMT-LIB
-standard).
-
 Different solvers have different default sets of options.  For example, CVC4
 starts with `:produce-models` false while Z3 starts with it true.  It is a good
 idea to explicitly set options to insulate yourself from these differences.
+
+## Known Iusses
+
+The `:print-success` option is not supported and is always false (in violation
+of the SMT-LIB standard).
 
 ## Similar Projects
 

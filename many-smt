@@ -135,6 +135,9 @@ def is_check_sat(sexp):
 def is_inspect_command(sexp):
     return isinstance(sexp, list) and sexp[0] in ("get-value", "get-assignment", "get-model", "get-unsat-assumptions", "get-proof", "get-unsat-core")
 
+def is_echo(sexp):
+    return isinstance(sexp, list) and len(sexp) == 2 and sexp[0] == "echo"
+
 def is_error(sexp):
     return isinstance(sexp, list) and sexp[0] == "error"
 
@@ -365,6 +368,8 @@ def run(argv):
                     emit_output(serialize_sexp(res))
                 else:
                     output_error("No model is available")
+            elif is_echo(sexp):
+                emit_output(serialize_sexp(sexp[1]))
             else:
                 for s in solvers:
                     s.send(sexp_str)

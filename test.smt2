@@ -5,3 +5,4 @@
 (assert (distinct x y))
 (check-sat)
 (get-model)
+(echo "Done!")
