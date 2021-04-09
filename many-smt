@@ -58,7 +58,8 @@ class IncrementalSExpParser(object):
         "incomplete_sexp",
         "incomplete_atom",
         "in_comment",
-        "in_naked_atom",
+        "in_string",
+        "in_string_after_double_quote",
         "paren_depth")
 
     def __init__(self):
@@ -68,7 +69,8 @@ class IncrementalSExpParser(object):
         self.incomplete_sexp = []
         self.incomplete_atom = ""
         self.in_comment = False
-        self.in_naked_atom = False
+        self.in_string = False
+        self.in_string_after_double_quote = False
         self.paren_depth = 0
 
     def feed(self, text_bytes):
@@ -88,46 +90,64 @@ class IncrementalSExpParser(object):
         self.reset()
         return result
 
-    def _finish_atom(self):
+    def _end_atom_or_string(self):
+        if self.in_string_after_double_quote:
+            self.incomplete_atom += '"'
+            self.in_string_after_double_quote = False
+            self.in_string = False
         if self.incomplete_atom and self.incomplete_sexp:
             self.incomplete_sexp[-1].append(self.incomplete_atom)
             self.incomplete_atom = ""
+        if self.incomplete_atom and self.paren_depth == 0:
+            yield self._finish()
+        assert not self.incomplete_atom
 
     def _feed(self, text_bytes):
         for c in text_bytes:
             c = chr(c) # NOTE: assuming ASCII charset
+
             if self.in_comment:
                 if c == "\n":
                     self.in_comment = False
-            else:
-                if c == ";":
-                    self._finish_atom()
-                    if self.in_naked_atom:
-                        yield self._finish()
-                    self.in_comment = True
+                continue
+            elif c == '"':
+                if self.in_string_after_double_quote:
+                    self.incomplete_atom += '""'
+                    self.in_string_after_double_quote = False
+                elif self.in_string:
+                    self.in_string_after_double_quote = True
                 else:
-                    if c == "(":
-                        self._finish_atom()
-                        if self.in_naked_atom:
-                            yield self._finish()
-                        self.incomplete_sexp.append([])
-                        self.paren_depth += 1
-                    elif c == ")":
-                        self._finish_atom()
-                        self.paren_depth -= 1
-                        if self.paren_depth == 0:
-                            yield self._finish()
-                        else:
-                            self.incomplete_sexp[-2].append(self.incomplete_sexp[-1])
-                            self.incomplete_sexp.pop()
-                    elif c in " \t\r\n":
-                        self._finish_atom()
-                        if self.in_naked_atom:
-                            yield self._finish()
-                    else:
-                        self.incomplete_atom += c
-                        if self.paren_depth == 0:
-                            self.in_naked_atom = True
+                    yield from self._end_atom_or_string()
+                    self.in_string = True
+                    self.incomplete_atom = c
+                continue
+            elif self.in_string_after_double_quote:
+                yield from self._end_atom_or_string()
+                assert not self.incomplete_atom
+            elif self.in_string:
+                self.incomplete_atom += c
+                continue
+            elif c == ";":
+                yield from self._end_atom_or_string()
+                self.in_comment = True
+                continue
+
+            if c == "(":
+                yield from self._end_atom_or_string()
+                self.incomplete_sexp.append([])
+                self.paren_depth += 1
+            elif c == ")":
+                yield from self._end_atom_or_string()
+                self.paren_depth -= 1
+                if self.paren_depth == 0:
+                    yield self._finish()
+                else:
+                    self.incomplete_sexp[-2].append(self.incomplete_sexp[-1])
+                    self.incomplete_sexp.pop()
+            elif c in " \t\r\n":
+                yield from self._end_atom_or_string()
+            else:
+                self.incomplete_atom += c
 
 def is_check_sat(sexp):
     return isinstance(sexp, list) and sexp[0] in ("check-sat", "check-sat-assuming")
