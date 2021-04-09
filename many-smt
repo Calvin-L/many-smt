@@ -150,10 +150,10 @@ class IncrementalSExpParser(object):
                 self.incomplete_atom += c
 
 def is_check_sat(sexp):
-    return isinstance(sexp, list) and sexp[0] in ("check-sat", "check-sat-assuming")
+    return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] in ("check-sat", "check-sat-assuming")
 
 def is_inspect_command(sexp):
-    return isinstance(sexp, list) and sexp[0] in ("get-value", "get-assignment", "get-model", "get-unsat-assumptions", "get-proof", "get-unsat-core")
+    return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] in ("get-value", "get-assignment", "get-model", "get-unsat-assumptions", "get-proof", "get-unsat-core")
 
 def is_echo(sexp):
     return isinstance(sexp, list) and len(sexp) == 2 and sexp[0] == "echo"
@@ -162,7 +162,7 @@ def is_set_option(sexp):
     return isinstance(sexp, list) and len(sexp) == 3 and sexp[0] == "set-option"
 
 def is_error(sexp):
-    return isinstance(sexp, list) and sexp[0] == "error"
+    return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error"
 
 # ----------------------------------------------------------------------
 # Solver processes
