@@ -138,6 +138,9 @@ def is_inspect_command(sexp):
 def is_echo(sexp):
     return isinstance(sexp, list) and len(sexp) == 2 and sexp[0] == "echo"
 
+def is_set_option(sexp):
+    return isinstance(sexp, list) and len(sexp) == 3 and sexp[0] == "set-option"
+
 def is_error(sexp):
     return isinstance(sexp, list) and sexp[0] == "error"
 
@@ -317,6 +320,13 @@ def run(argv):
     # commands in order.
     commands_so_far = [ENABLE_PRINT_SUCCESS]
 
+    # True if the SMT-LIB option :print-success is enabled.  If enabled, then
+    # many-smt must output "success" after each successful command.
+    print_success = True
+    def print_success_if_necessary():
+        if print_success:
+            emit_output("success")
+
     # -------------------------------------------------
 
     stdin_unbuffered = io.open(sys.stdin.fileno(), 'rb', closefd=False, buffering=0)
@@ -328,9 +338,6 @@ def run(argv):
 
         for sexp in p.feed(block):
             solvers = [s for s in solvers if s.alive]
-
-            if not solvers:
-                die("No solvers are available")
 
             log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
             sexp_str = serialize_sexp(sexp)
@@ -370,12 +377,19 @@ def run(argv):
                     output_error("No model is available")
             elif is_echo(sexp):
                 emit_output(serialize_sexp(sexp[1]))
+            elif is_set_option(sexp) and sexp[1] == ":print-success":
+                print_success = (sexp[2] == "true")
+                print_success_if_necessary()
             else:
                 for s in solvers:
                     s.send(sexp_str)
                 commands_so_far.append(sexp_str)
                 satisfied_solver = None
                 sync(solvers)
+                if any(s.alive for s in solvers):
+                    print_success_if_necessary()
+                else:
+                    die("No solvers are available")
 
 if __name__ == "__main__":
     run(sys.argv[1:])

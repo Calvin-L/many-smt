@@ -57,11 +57,6 @@ Different solvers have different default sets of options.  For example, CVC4
 starts with `:produce-models` false while Z3 starts with it true.  It is a good
 idea to explicitly set options to insulate yourself from these differences.
 
-## Known Iusses
-
-The `:print-success` option is not supported and is always false (in violation
-of the SMT-LIB standard).
-
 ## Similar Projects
 
 [metaSMT](https://github.com/agra-uni-bremen/metaSMT) abstracts over multiple

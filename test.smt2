@@ -1,3 +1,4 @@
+(set-option :print-success false)
 (set-option :produce-models true)
 (set-logic ALL)
 (declare-const x Int)
@@ -5,4 +6,7 @@
 (assert (distinct x y))
 (check-sat)
 (get-model)
+
+(set-option :print-success true)
+(assert true)
 (echo "Done!")
