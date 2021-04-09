@@ -6,6 +6,7 @@
 (assert (distinct x y))
 (check-sat)
 (get-model)
+(get-value (x y))
 
 (set-option :print-success true)
 (assert true)
