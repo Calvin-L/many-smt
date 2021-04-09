@@ -372,6 +372,13 @@ def run(argv):
             solvers = [s for s in solvers if s.alive]
 
             log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
+
+            # Some solvers (e.g. CVC4 version 1.7) will hang if you try to send
+            # them a single-character atom instead of an SMT-LIB command.  We
+            # can prevent this bad behavior by insulating the solvers a bit.
+            if isinstance(sexp, str):
+                die("Not a legal command: {!r}".format(sexp))
+
             sexp_str = serialize_sexp(sexp)
 
             # Some solvers might be line-buffered, in which case we should
