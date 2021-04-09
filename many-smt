@@ -82,6 +82,18 @@ class IncrementalSExpParser(object):
         """
         return list(self._feed(text_bytes))
 
+    def feed_eof(self):
+        if self.incomplete_atom:
+            if self.in_string_after_double_quote:
+                self.incomplete_atom += '"'
+            return [self._finish()]
+        elif self.in_string:
+            raise Exception("unclosed double-quote")
+        elif self.paren_depth > 0:
+            raise Exception("unclosed parentheses [depth={}, incomplete_sexp={!r}, incomplete_atom={!r}]".format(self.paren_depth, self.incomplete_sexp, self.incomplete_atom))
+        else:
+            return []
+
     def _finish(self):
         if self.incomplete_sexp:
             result, = self.incomplete_sexp
@@ -351,12 +363,12 @@ def run(argv):
 
     stdin_unbuffered = io.open(sys.stdin.fileno(), 'rb', closefd=False, buffering=0)
 
-    while block := stdin_unbuffered.read(1024):
+    while True:
 
-        if not block:
-            break
+        block = stdin_unbuffered.read(1024)
+        log_debug("Read {} bytes from stdin".format(len(block)))
 
-        for sexp in p.feed(block):
+        for sexp in (p.feed(block) if block else p.feed_eof()):
             solvers = [s for s in solvers if s.alive]
 
             log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
@@ -410,6 +422,10 @@ def run(argv):
                     print_success_if_necessary()
                 else:
                     die("No solvers are available")
+
+        if not block:
+            log_debug("No more input; stopping.")
+            break
 
 if __name__ == "__main__":
     run(sys.argv[1:])
