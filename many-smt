@@ -5,13 +5,34 @@ import selectors
 import subprocess
 import sys
 import io
+import codecs
 
 # ----------------------------------------------------------------------
 # Configuration
 
-SMTLIB_CHARSET = "ascii" # NOTE: hardcoded elsewhere as well
 BUFFER_SIZE = 1024
 DEBUG = False
+
+# This tool only supports US-ASCII input, which is the "least common
+# denominator" character set for SMT-LIB.  The SMT-LIB 2.6 standard has this to
+# say on the subject (Section 3.1 "Lexicon"):
+#
+#  > SMT-LIB source files consist of Unicode characters in any 8-bit encoding,
+#  > such as UTF-8, that extends the original 7-bit US-ASCII set.  While not
+#  > technically Unicode, the ISO 8859-1 character set is also allowed since it
+#  > coincides with the first 256 characters of UTF-8.
+#
+# Insane!  Since there is no option to declare the character set in an input,
+# solvers have no way to determine if an input is UTF-8 or Calvin's-Crazy-
+# Nonstandard-US-ASCII-Compatible-Charset.
+#
+# I would LIKE to support non-US characters in inputs, but given the vagueness
+# of the standard I have decided that the best approach is to accept ONLY
+# US-ASCII input.  This will cause the Many-SMT to reject inputs with
+# non-US-ASCII characters, but it insulates us from weirdness if different
+# solvers have different expectations about the input charset.
+
+SMTLIB_CHARSET = "us-ascii"
 
 # ----------------------------------------------------------------------
 # Output
@@ -60,7 +81,8 @@ class IncrementalSExpParser(object):
         "in_comment",
         "in_string",
         "in_string_after_double_quote",
-        "paren_depth")
+        "paren_depth",
+        "byte_decoder")
 
     def __init__(self):
         self.reset()
@@ -72,6 +94,7 @@ class IncrementalSExpParser(object):
         self.in_string = False
         self.in_string_after_double_quote = False
         self.paren_depth = 0
+        self.byte_decoder = codecs.getincrementaldecoder(SMTLIB_CHARSET)()
 
     def feed(self, text_bytes):
         """
@@ -83,6 +106,9 @@ class IncrementalSExpParser(object):
         return list(self._feed(text_bytes))
 
     def feed_eof(self):
+        undecoded_bytes, _ = self.byte_decoder.getstate()
+        if undecoded_bytes:
+            raise Exception("premature EOF (did the input end with half of a multi-byte character?)")
         if self.incomplete_atom:
             if self.in_string_after_double_quote:
                 self.incomplete_atom += '"'
@@ -115,8 +141,7 @@ class IncrementalSExpParser(object):
         assert not self.incomplete_atom
 
     def _feed(self, text_bytes):
-        for c in text_bytes:
-            c = chr(c) # NOTE: assuming ASCII charset
+        for c in self.byte_decoder.decode(text_bytes):
 
             if self.in_comment:
                 if c == "\n":
