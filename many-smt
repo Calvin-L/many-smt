@@ -199,7 +199,8 @@ def is_set_option(sexp):
     return isinstance(sexp, list) and len(sexp) == 3 and sexp[0] == "set-option"
 
 def is_error(sexp):
-    return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error"
+    # NOTE: when CVC4 crashes, it outputs "error" instead of "(error ...)".
+    return sexp == "error" or (isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error")
 
 # ----------------------------------------------------------------------
 # Solver processes
