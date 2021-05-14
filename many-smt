@@ -244,12 +244,18 @@ class SolverProcess(object):
     def abort_check_sat(self, commands_so_far):
         log_debug("Aborting {} (check-sat)".format(self))
         self.close()
+
         try:
             self.re_open()
             for cmd in commands_so_far:
                 self.send(cmd)
                 sync([self])
-            self.send('(echo "aborted")\n')
+
+            # Send one additional no-op command so that abort_check_sat acts
+            # like a regular `send`.  We should expect "success" as the next
+            # output from this solver.
+            self.send('(assert true)\n')
+
         except Exception as e:
             log_warning("Error from {} while replaying commands after abort: {}".format(self, e))
             self.close()
