@@ -9,14 +9,18 @@ OUT="$(many-smt <<EOF
 (declare-const x (_ BitVec 8))
 (assert (distinct x ${HASH}x00))
 (check-sat)
-(get-model)
 (assert (distinct x ${HASH}xFF))
 (check-sat)
-(get-model)
 EOF)"
 
 EXPECTED="$(cat <<EOF
-unsat
+success
+success
+success
+success
+sat
+success
+sat
 EOF)"
 
 echo "$OUT"
