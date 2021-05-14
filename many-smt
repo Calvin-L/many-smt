@@ -415,6 +415,7 @@ def run(argv):
                     s.send(sexp_str)
 
                 waiting_solvers = list(solvers)
+                got_output = False
                 while waiting_solvers:
                     solver, res = next_response(waiting_solvers)
                     log_note("Solver {} responded with {}".format(solver, res))
@@ -422,6 +423,7 @@ def run(argv):
                     if is_error(res):
                         solver.close()
                     elif res != "unknown":
+                        got_output = True
                         emit_output(res)
                         if res == "sat":
                             satisfied_solver = solver
@@ -429,7 +431,7 @@ def run(argv):
                 if waiting_solvers:
                     for s in waiting_solvers:
                         s.abort_check_sat(commands_so_far)
-                else:
+                if not got_output:
                     emit_output("unknown")
                 sync(waiting_solvers)
             elif is_inspect_command(sexp):
