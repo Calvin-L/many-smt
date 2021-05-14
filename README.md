@@ -5,6 +5,7 @@ SMT-LIB solver, it accepts SMT-LIB v2.6 input on stdin and writes output to
 stdout.
 
 Currently, Many-SMT knows how to use
+[Boolector](https://boolector.github.io/),
 [CVC4](https://cvc4.github.io/),
 [Yices](https://yices.csl.sri.com/), and
 [Z3](https://github.com/Z3Prover/z3).

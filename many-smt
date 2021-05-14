@@ -281,6 +281,10 @@ class SolverProcess(object):
     def __del__(self):
         self.close()
 
+class Boolector(SolverProcess):
+    def __init__(self):
+        super().__init__(["boolector", "--smt2", "--incremental"])
+
 class CVC4(SolverProcess):
     def __init__(self):
         super().__init__(["cvc4", "--lang=smtlib2.6", "--incremental"])
@@ -303,7 +307,7 @@ class Yices(SolverProcess):
     def __init__(self):
         super().__init__(["yices-smt2", "--incremental"])
 
-ALL_KNOWN_SOLVERS = [CVC4, Yices, Z3]
+ALL_KNOWN_SOLVERS = [Boolector, CVC4, Yices, Z3]
 
 # ----------------------------------------------------------------------
 # Batch commands for interacting with multiple solvers
