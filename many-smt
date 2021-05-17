@@ -41,8 +41,11 @@ def emit_output(output):
     print(output)
     sys.stdout.flush()
 
+def encode_smtlib_str(s):
+    return '"{}"'.format(s.replace('"', '""'))
+
 def output_error(message):
-    emit_output('(error "{}")'.format(message))
+    emit_output('(error {})'.format(encode_smtlib_str(message)))
 
 def die(message):
     output_error(message)
