@@ -13,6 +13,7 @@
 # so we opt for the first choice (exit with a nonzero status).
 
 OUT="$(many-smt <<EOF
+(get-info :error-behavior)
 "hello"
 (reset)
 EOF)"
@@ -26,6 +27,7 @@ if [[ $RETCODE == 0 ]]; then
 fi
 
 EXPECTED="$(cat <<EOF
+(:error-behavior immediate-exit)
 (error "Not a legal command: '""hello""'")
 EOF)"
 

@@ -10,6 +10,10 @@ import codecs
 # ----------------------------------------------------------------------
 # Configuration
 
+SOLVER_NAME    = "Many-SMT"
+SOLVER_AUTHORS = "Calvin Loncaric"
+SOLVER_VERSION = "??.??.??"
+
 BUFFER_SIZE = 1024
 DEBUG = False
 
@@ -200,6 +204,9 @@ def is_echo(sexp):
 
 def is_set_option(sexp):
     return isinstance(sexp, list) and len(sexp) == 3 and sexp[0] == "set-option"
+
+def is_get_info(sexp):
+    return isinstance(sexp, list) and len(sexp) > 1 and sexp[0] == "get-info"
 
 def is_error(sexp):
     # NOTE: when CVC4 crashes, it outputs "error" instead of "(error ...)".
@@ -460,6 +467,28 @@ def run(argv):
             elif is_set_option(sexp) and sexp[1] == ":print-success":
                 print_success = (sexp[2] == "true")
                 print_success_if_necessary()
+            elif is_get_info(sexp):
+                request = sexp[1]
+                if request == ":all-statistics":
+                    stats = {
+                        ":available-solvers": "({})".format(" ".join(str(s) for s in solvers)),
+                    }
+                    emit_output("({})".format(" ".join("{} {}".format(k, v) for k, v in stats.items())))
+                elif request == ":authors":
+                    emit_output("(:authors {})".format(encode_smtlib_str(SOLVER_AUTHORS)))
+                elif request == ":error-behavior":
+                    emit_output("(:error-behavior immediate-exit)")
+                elif request == ":name":
+                    emit_output("(:name {})".format(encode_smtlib_str(SOLVER_NAME)))
+                elif request == ":version":
+                    # NOTE 2021/5/17: standard says "The response is a string literal with the version
+                    # number of the solver (e.g., '1.2')."  However, this disagrees with other get-info
+                    # responses since they are prefixed with an attribute keyword like ":name".  Z3 and
+                    # CVC4 both output "(:version ___)", and the grammar figures indicate that it should
+                    # be done this way, so I'm going to do it this way.
+                    emit_output("(:version {})".format(encode_smtlib_str(SOLVER_VERSION)))
+                else:
+                    emit_output("unsupported")
             else:
                 for s in solvers:
                     s.send(sexp_str)
