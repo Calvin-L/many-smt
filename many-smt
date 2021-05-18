@@ -487,7 +487,7 @@ def run(argv):
                 if sexp[2] == "true":
                     emit_output("unsupported")
                 elif sexp[2] == "false":
-                    emit_output("success")
+                    print_success_if_necessary()
                 else:
                     die("Illegal value {!r} for option {}".format(sexp[2], sexp[1]))
             elif is_get_info(sexp):
