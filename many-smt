@@ -211,6 +211,9 @@ def is_get_info(sexp):
 def is_get_assertions(sexp):
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "get-assertions"
 
+def is_exit(sexp):
+    return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "exit"
+
 def is_error(sexp):
     # NOTE: when CVC4 crashes, it outputs "error" instead of "(error ...)".
     return sexp == "error" or (isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error")
@@ -501,6 +504,13 @@ def run(argv):
                     emit_output("unsupported")
             elif is_get_assertions(sexp):
                 die(":produce-assertions mode is not supported")
+            elif is_exit(sexp):
+                # The solvers SHOULD exit when their parent process exits, so
+                # this cleanup isn't strictly required.  Still, I think it's a
+                # good idea in case one of the solvers is hanging.
+                for s in solvers:
+                    s.close()
+                sys.exit(0)
             else:
                 for s in solvers:
                     s.send(sexp_str)
