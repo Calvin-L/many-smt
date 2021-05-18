@@ -38,6 +38,16 @@ DEBUG = False
 
 SMTLIB_CHARSET = "us-ascii"
 
+# The INIT_COMMANDS are sent to each solver when it starts.
+
+INIT_COMMANDS = [
+    # Even though the standard says that :print-success starts out true, most
+    # solvers don't have it enabled by default.  Many-SMT relies heavily on the
+    # underlying solvers printing "success" after each command, so we have to
+    # enable it manually.
+    "(set-option :print-success true)\n",
+]
+
 # ----------------------------------------------------------------------
 # Output
 
@@ -386,10 +396,10 @@ def run(argv):
         except FileNotFoundError:
             log_warning("Solver {} not found".format(Constructor.__name__))
 
-    ENABLE_PRINT_SUCCESS = "(set-option :print-success true)\n"
-    for s in solvers:
-        s.send(ENABLE_PRINT_SUCCESS)
-    sync(solvers)
+    for cmd in INIT_COMMANDS:
+        for s in solvers:
+            s.send(cmd)
+        sync(solvers)
 
     # --------------------- STATE ---------------------
 
@@ -402,7 +412,7 @@ def run(argv):
     # Commands that "matter".  Some solvers can't be interrupted while checking
     # for satisfiability; for those solvers, we kill them and then replay these
     # commands in order.
-    commands_so_far = [ENABLE_PRINT_SUCCESS]
+    commands_so_far = list(INIT_COMMANDS)
 
     # True if the SMT-LIB option :print-success is enabled.  If enabled, then
     # many-smt must output "success" after each successful command.
