@@ -221,6 +221,9 @@ def is_get_info(sexp):
 def is_get_assertions(sexp):
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "get-assertions"
 
+def is_reset(sexp):
+    return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "reset"
+
 def is_exit(sexp):
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "exit"
 
@@ -521,6 +524,41 @@ def run(argv):
                 for s in solvers:
                     s.close()
                 sys.exit(0)
+            elif is_reset(sexp):
+                # The simplest way to implement (reset) is to just terminate all the open solvers
+                # and re-open them.  This has the advantage of restarting solvers that died with
+                # errors earlier.
+                #
+                # A tempting hybrid approach would be to send (reset) to all the solvers that are
+                # still alive and only restart the dead ones.  Unfortunately, that appraoch WON'T
+                # WORK (tested 2021/5/18 with CVC4 1.8 and Z3 4.8.10).  The problem is that some
+                # solvers (e.g. CVC4) retain the :print-success option after a (reset) and will
+                # print "success".  Others (e.g. Z3) do a more complete reset and do not retain
+                # the :print-success option.  Handling such a disagreement would involve a lot of
+                # special-casing, so we'll just take the simple approach above instead.
+                for s in solvers:
+                    s.close()
+
+                solvers.clear()
+                for Constructor in ALL_KNOWN_SOLVERS:
+                    try:
+                        solver = Constructor()
+                        solvers.append(solver)
+                        log_note("Started solver {}".format(solver))
+                    except FileNotFoundError:
+                        log_warning("Solver {} not found".format(Constructor.__name__))
+
+                for cmd in INIT_COMMANDS:
+                    for s in solvers:
+                        s.send(cmd)
+                    sync(solvers)
+
+                commands_so_far = list(INIT_COMMANDS)
+                print_success = True
+                if any(s.alive for s in solvers):
+                    print_success_if_necessary()
+                else:
+                    die("No solvers are available")
             else:
                 for s in solvers:
                     s.send(sexp_str)
