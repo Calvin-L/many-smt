@@ -208,6 +208,9 @@ def is_set_option(sexp):
 def is_get_info(sexp):
     return isinstance(sexp, list) and len(sexp) > 1 and sexp[0] == "get-info"
 
+def is_get_assertions(sexp):
+    return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "get-assertions"
+
 def is_error(sexp):
     # NOTE: when CVC4 crashes, it outputs "error" instead of "(error ...)".
     return sexp == "error" or (isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error")
@@ -467,6 +470,13 @@ def run(argv):
             elif is_set_option(sexp) and sexp[1] == ":print-success":
                 print_success = (sexp[2] == "true")
                 print_success_if_necessary()
+            elif is_set_option(sexp) and sexp[1] in (":produce-assertions", ":interactive-mode"):
+                if sexp[2] == "true":
+                    emit_output("unsupported")
+                elif sexp[2] == "false":
+                    emit_output("success")
+                else:
+                    die("Illegal value {!r} for option {}".format(sexp[2], sexp[1]))
             elif is_get_info(sexp):
                 request = sexp[1]
                 if request == ":all-statistics":
@@ -489,6 +499,8 @@ def run(argv):
                     emit_output("(:version {})".format(encode_smtlib_str(SOLVER_VERSION)))
                 else:
                     emit_output("unsupported")
+            elif is_get_assertions(sexp):
+                die(":produce-assertions mode is not supported")
             else:
                 for s in solvers:
                     s.send(sexp_str)
