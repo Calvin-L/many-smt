@@ -380,6 +380,186 @@ def sync(solvers):
                     break
 
 # ----------------------------------------------------------------------
+# Main class
+#
+# As much as possible, Many-SMT tries to let the underlying solvers handle the
+# state tracked by an SMT solver.  However, there are some bits (like the
+# :print-success option) that Many-SMT has to track on its own.  The relevant
+# state is wrapped up in an instance of this class.
+
+class ManySMT(object):
+
+    __slots__ = (
+        "living_solvers",
+
+        # Solver with a staisfying model.
+        "satisfied_solver",
+
+        # Commands that "matter".  Some solvers can't be interrupted while checking
+        # for satisfiability; for those solvers, we kill them and then replay these
+        # commands in order.
+        "commands_so_far",
+
+        # True if the SMT-LIB option :print-success is enabled.  If enabled, then
+        # many-smt must output "success" after each successful command.
+        "print_success",
+    )
+
+    def __init__(self):
+        self.living_solvers = []
+        self.satisfied_solver = None
+        self.commands_so_far = []
+        self.print_success = True
+
+    def start(self):
+        solvers = self.living_solvers
+        assert not solvers
+
+        for Constructor in ALL_KNOWN_SOLVERS:
+            try:
+                solver = Constructor()
+                solvers.append(solver)
+                log_note("Started solver {}".format(solver))
+            except FileNotFoundError:
+                log_warning("Solver {} not found".format(Constructor.__name__))
+
+        for cmd in INIT_COMMANDS:
+            for s in solvers:
+                s.send(cmd)
+            sync(solvers)
+
+        self.satisfied_solver = None
+        self.commands_so_far = list(INIT_COMMANDS)
+        self.print_success = True
+
+    def close(self):
+        if hasattr(self, "living_solvers"):
+            solvers = self.living_solvers
+            for s in solvers:
+                s.close()
+            solvers.clear()
+
+    def exec(self, sexp):
+        solvers = self.living_solvers = [s for s in self.living_solvers if s.alive]
+
+        log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
+
+        # Some solvers (e.g. CVC4 version 1.7) will hang if you try to send
+        # them a single-character atom instead of an SMT-LIB command.  We
+        # can prevent this bad behavior by insulating the solvers a bit.
+        if isinstance(sexp, str):
+            die("Not a legal command: {!r}".format(sexp))
+
+        sexp_str = serialize_sexp(sexp)
+
+        # Some solvers might be line-buffered, in which case we should
+        # politely give them a newline.
+        sexp_str += "\n"
+
+        if is_check_sat(sexp):
+            for s in solvers:
+                s.send(sexp_str)
+
+            waiting_solvers = list(solvers)
+            got_output = False
+            while waiting_solvers:
+                solver, res = next_response(waiting_solvers)
+                log_note("Solver {} responded with {}".format(solver, res))
+                waiting_solvers.remove(solver)
+                if is_error(res):
+                    solver.close()
+                elif res != "unknown":
+                    got_output = True
+                    emit_output(res)
+                    if res == "sat":
+                        self.satisfied_solver = solver
+                    break
+            if waiting_solvers:
+                for s in waiting_solvers:
+                    s.abort_check_sat(self.commands_so_far)
+            if not got_output:
+                emit_output("unknown")
+            sync(waiting_solvers)
+        elif is_inspect_command(sexp):
+            if self.satisfied_solver is not None:
+                self.satisfied_solver.send(sexp_str)
+                _, res = next_response([self.satisfied_solver])
+                emit_output(serialize_sexp(res))
+            else:
+                output_error("No model is available")
+        elif is_echo(sexp):
+            emit_output(serialize_sexp(sexp[1]))
+        elif is_set_option(sexp) and sexp[1] == ":print-success":
+            self.print_success = (sexp[2] == "true")
+            self.print_success_if_necessary()
+        elif is_set_option(sexp) and sexp[1] in (":produce-assertions", ":interactive-mode"):
+            if sexp[2] == "true":
+                emit_output("unsupported")
+            elif sexp[2] == "false":
+                self.print_success_if_necessary()
+            else:
+                die("Illegal value {!r} for option {}".format(sexp[2], sexp[1]))
+        elif is_get_info(sexp):
+            request = sexp[1]
+            if request == ":all-statistics":
+                stats = {
+                    ":available-solvers": "({})".format(" ".join(str(s) for s in solvers)),
+                }
+                emit_output("({})".format(" ".join("{} {}".format(k, v) for k, v in stats.items())))
+            elif request == ":authors":
+                emit_output("(:authors {})".format(encode_smtlib_str(SOLVER_AUTHORS)))
+            elif request == ":error-behavior":
+                emit_output("(:error-behavior immediate-exit)")
+            elif request == ":name":
+                emit_output("(:name {})".format(encode_smtlib_str(SOLVER_NAME)))
+            elif request == ":version":
+                # NOTE 2021/5/17: standard says "The response is a string literal with the version
+                # number of the solver (e.g., '1.2')."  However, this disagrees with other get-info
+                # responses since they are prefixed with an attribute keyword like ":name".  Z3 and
+                # CVC4 both output "(:version ___)", and the grammar figures indicate that it should
+                # be done this way, so I'm going to do it this way.
+                emit_output("(:version {})".format(encode_smtlib_str(SOLVER_VERSION)))
+            else:
+                emit_output("unsupported")
+        elif is_get_assertions(sexp):
+            die(":produce-assertions mode is not supported")
+        elif is_exit(sexp):
+            # The solvers SHOULD exit when their parent process exits, so
+            # this cleanup isn't strictly required.  Still, I think it's a
+            # good idea in case one of the solvers is hanging.
+            self.close()
+            sys.exit(0)
+        elif is_reset(sexp):
+            # The simplest way to implement (reset) is to just terminate all the open solvers
+            # and re-open them.  This has the advantage of restarting solvers that died with
+            # errors earlier.
+            #
+            # A tempting hybrid approach would be to send (reset) to all the solvers that are
+            # still alive and only restart the dead ones.  Unfortunately, that appraoch WON'T
+            # WORK (tested 2021/5/18 with CVC4 1.8 and Z3 4.8.10).  The problem is that some
+            # solvers (e.g. CVC4) retain the :print-success option after a (reset) and will
+            # print "success".  Others (e.g. Z3) do a more complete reset and do not retain
+            # the :print-success option.  Handling such a disagreement would involve a lot of
+            # special-casing, so we'll just take the simple approach above instead.
+            self.close()
+            self.start()
+            self.print_success_if_necessary()
+        else:
+            for s in solvers:
+                s.send(sexp_str)
+            self.commands_so_far.append(sexp_str)
+            self.satisfied_solver = None
+            sync(solvers)
+            if any(s.alive for s in solvers):
+                self.print_success_if_necessary()
+            else:
+                die("No solvers are available")
+
+    def print_success_if_necessary(self):
+        if self.print_success:
+            emit_output("success")
+
+# ----------------------------------------------------------------------
 # Program entry point
 
 def run(argv):
@@ -390,189 +570,31 @@ def run(argv):
     if args.debug:
         set_debug(True)
 
-    solvers = []
-    for Constructor in ALL_KNOWN_SOLVERS:
-        try:
-            solver = Constructor()
-            solvers.append(solver)
-            log_note("Started solver {}".format(solver))
-        except FileNotFoundError:
-            log_warning("Solver {} not found".format(Constructor.__name__))
-
-    for cmd in INIT_COMMANDS:
-        for s in solvers:
-            s.send(cmd)
-        sync(solvers)
-
-    # --------------------- STATE ---------------------
-
     # Incremental parser for input commands.
     p = IncrementalSExpParser()
-
-    # Solver with a staisfying model.
-    satisfied_solver = None
-
-    # Commands that "matter".  Some solvers can't be interrupted while checking
-    # for satisfiability; for those solvers, we kill them and then replay these
-    # commands in order.
-    commands_so_far = list(INIT_COMMANDS)
-
-    # True if the SMT-LIB option :print-success is enabled.  If enabled, then
-    # many-smt must output "success" after each successful command.
-    print_success = True
-    def print_success_if_necessary():
-        if print_success:
-            emit_output("success")
-
-    # -------------------------------------------------
-
     stdin_unbuffered = io.open(sys.stdin.fileno(), 'rb', closefd=False, buffering=0)
 
-    while True:
+    smt = ManySMT()
+    try:
+        smt.start()
 
-        block = stdin_unbuffered.read(1024)
-        log_debug("Read {} bytes from stdin".format(len(block)))
+        while True:
 
-        for sexp in (p.feed(block) if block else p.feed_eof()):
-            solvers = [s for s in solvers if s.alive]
+            block = stdin_unbuffered.read(1024)
+            log_debug("Read {} bytes from stdin".format(len(block)))
 
-            log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
+            for sexp in (p.feed(block) if block else p.feed_eof()):
+                smt.exec(sexp)
 
-            # Some solvers (e.g. CVC4 version 1.7) will hang if you try to send
-            # them a single-character atom instead of an SMT-LIB command.  We
-            # can prevent this bad behavior by insulating the solvers a bit.
-            if isinstance(sexp, str):
-                die("Not a legal command: {!r}".format(sexp))
+            if not block:
+                log_debug("No more input; stopping.")
+                break
 
-            sexp_str = serialize_sexp(sexp)
+    except KeyboardInterrupt:
+        pass
 
-            # Some solvers might be line-buffered, in which case we should
-            # politely give them a newline.
-            sexp_str += "\n"
-
-            if is_check_sat(sexp):
-                for s in solvers:
-                    s.send(sexp_str)
-
-                waiting_solvers = list(solvers)
-                got_output = False
-                while waiting_solvers:
-                    solver, res = next_response(waiting_solvers)
-                    log_note("Solver {} responded with {}".format(solver, res))
-                    waiting_solvers.remove(solver)
-                    if is_error(res):
-                        solver.close()
-                    elif res != "unknown":
-                        got_output = True
-                        emit_output(res)
-                        if res == "sat":
-                            satisfied_solver = solver
-                        break
-                if waiting_solvers:
-                    for s in waiting_solvers:
-                        s.abort_check_sat(commands_so_far)
-                if not got_output:
-                    emit_output("unknown")
-                sync(waiting_solvers)
-            elif is_inspect_command(sexp):
-                if satisfied_solver is not None:
-                    satisfied_solver.send(sexp_str)
-                    _, res = next_response([satisfied_solver])
-                    emit_output(serialize_sexp(res))
-                else:
-                    output_error("No model is available")
-            elif is_echo(sexp):
-                emit_output(serialize_sexp(sexp[1]))
-            elif is_set_option(sexp) and sexp[1] == ":print-success":
-                print_success = (sexp[2] == "true")
-                print_success_if_necessary()
-            elif is_set_option(sexp) and sexp[1] in (":produce-assertions", ":interactive-mode"):
-                if sexp[2] == "true":
-                    emit_output("unsupported")
-                elif sexp[2] == "false":
-                    print_success_if_necessary()
-                else:
-                    die("Illegal value {!r} for option {}".format(sexp[2], sexp[1]))
-            elif is_get_info(sexp):
-                request = sexp[1]
-                if request == ":all-statistics":
-                    stats = {
-                        ":available-solvers": "({})".format(" ".join(str(s) for s in solvers)),
-                    }
-                    emit_output("({})".format(" ".join("{} {}".format(k, v) for k, v in stats.items())))
-                elif request == ":authors":
-                    emit_output("(:authors {})".format(encode_smtlib_str(SOLVER_AUTHORS)))
-                elif request == ":error-behavior":
-                    emit_output("(:error-behavior immediate-exit)")
-                elif request == ":name":
-                    emit_output("(:name {})".format(encode_smtlib_str(SOLVER_NAME)))
-                elif request == ":version":
-                    # NOTE 2021/5/17: standard says "The response is a string literal with the version
-                    # number of the solver (e.g., '1.2')."  However, this disagrees with other get-info
-                    # responses since they are prefixed with an attribute keyword like ":name".  Z3 and
-                    # CVC4 both output "(:version ___)", and the grammar figures indicate that it should
-                    # be done this way, so I'm going to do it this way.
-                    emit_output("(:version {})".format(encode_smtlib_str(SOLVER_VERSION)))
-                else:
-                    emit_output("unsupported")
-            elif is_get_assertions(sexp):
-                die(":produce-assertions mode is not supported")
-            elif is_exit(sexp):
-                # The solvers SHOULD exit when their parent process exits, so
-                # this cleanup isn't strictly required.  Still, I think it's a
-                # good idea in case one of the solvers is hanging.
-                for s in solvers:
-                    s.close()
-                sys.exit(0)
-            elif is_reset(sexp):
-                # The simplest way to implement (reset) is to just terminate all the open solvers
-                # and re-open them.  This has the advantage of restarting solvers that died with
-                # errors earlier.
-                #
-                # A tempting hybrid approach would be to send (reset) to all the solvers that are
-                # still alive and only restart the dead ones.  Unfortunately, that appraoch WON'T
-                # WORK (tested 2021/5/18 with CVC4 1.8 and Z3 4.8.10).  The problem is that some
-                # solvers (e.g. CVC4) retain the :print-success option after a (reset) and will
-                # print "success".  Others (e.g. Z3) do a more complete reset and do not retain
-                # the :print-success option.  Handling such a disagreement would involve a lot of
-                # special-casing, so we'll just take the simple approach above instead.
-                for s in solvers:
-                    s.close()
-
-                solvers.clear()
-                for Constructor in ALL_KNOWN_SOLVERS:
-                    try:
-                        solver = Constructor()
-                        solvers.append(solver)
-                        log_note("Started solver {}".format(solver))
-                    except FileNotFoundError:
-                        log_warning("Solver {} not found".format(Constructor.__name__))
-
-                for cmd in INIT_COMMANDS:
-                    for s in solvers:
-                        s.send(cmd)
-                    sync(solvers)
-
-                commands_so_far = list(INIT_COMMANDS)
-                print_success = True
-                if any(s.alive for s in solvers):
-                    print_success_if_necessary()
-                else:
-                    die("No solvers are available")
-            else:
-                for s in solvers:
-                    s.send(sexp_str)
-                commands_so_far.append(sexp_str)
-                satisfied_solver = None
-                sync(solvers)
-                if any(s.alive for s in solvers):
-                    print_success_if_necessary()
-                else:
-                    die("No solvers are available")
-
-        if not block:
-            log_debug("No more input; stopping.")
-            break
+    finally:
+        smt.close()
 
 if __name__ == "__main__":
     run(sys.argv[1:])
