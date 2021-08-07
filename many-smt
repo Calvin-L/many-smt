@@ -450,6 +450,13 @@ class ManySMT(object):
         if isinstance(sexp, str):
             die("Not a legal command: {!r}".format(sexp))
 
+        # Rewrite (push) to (push 1) and (pop) to (pop 1).
+        # See tests/push.sh.
+        if sexp == ["push"]:
+            sexp = ["push", "1"]
+        if sexp == ["pop"]:
+            sexp = ["pop", "1"]
+
         sexp_str = serialize_sexp(sexp)
 
         # Some solvers might be line-buffered, in which case we should
