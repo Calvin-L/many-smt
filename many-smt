@@ -326,6 +326,7 @@ class SolverProcess(object):
 DEFAULT_SOLVERS = [
     ["boolector", "--smt2", "--incremental"],
     ["cvc4", "--lang=smtlib2.6", "--incremental"],
+    ["cvc5", "--lang=smtlib2.6", "--incremental"],
     ["yices-smt2", "--incremental"],
     ["z3", "-smt2", "-in"],
 ]
