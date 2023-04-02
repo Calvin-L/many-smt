@@ -571,6 +571,11 @@ class ManySMT(object):
 
 def run(argv):
     p = argparse.ArgumentParser(description='Run multiple SMT solvers in parallel.')
+    p.add_argument("-i", "--info",
+        help="Show information about configuration and available solvers, then exit. "
+             "In this mode ManySMT ignores stdin and pretends as if its input was simply "
+             "'(get-info :all-statistics)'.",
+        action="store_true")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args(argv)
 
@@ -585,17 +590,23 @@ def run(argv):
     try:
         smt.start()
 
-        while True:
+        if args.info:
 
-            block = stdin_unbuffered.read(1024)
-            log_debug("Read {} bytes from stdin".format(len(block)))
+            smt.exec(["get-info", ":all-statistics"])
 
-            for sexp in (p.feed(block) if block else p.feed_eof()):
-                smt.exec(sexp)
+        else:
 
-            if not block:
-                log_debug("No more input; stopping.")
-                break
+            while True:
+
+                block = stdin_unbuffered.read(1024)
+                log_debug("Read {} bytes from stdin".format(len(block)))
+
+                for sexp in (p.feed(block) if block else p.feed_eof()):
+                    smt.exec(sexp)
+
+                if not block:
+                    log_debug("No more input; stopping.")
+                    break
 
     except KeyboardInterrupt:
         pass
