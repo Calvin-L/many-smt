@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from typing import Union, TypeAlias, Sequence, Iterable, Optional, Tuple
 import argparse
 import selectors
 import subprocess
@@ -52,38 +53,43 @@ INIT_COMMANDS = [
 # ----------------------------------------------------------------------
 # Output
 
-def emit_output(output):
+def emit_output(output: str) -> None:
     print(output)
     sys.stdout.flush()
 
-def encode_smtlib_str(s):
+def encode_smtlib_str(s: str) -> str:
     return '"{}"'.format(s.replace('"', '""'))
 
-def output_error(message):
+def output_error(message: str) -> None:
     emit_output('(error {})'.format(encode_smtlib_str(message)))
 
-def die(message):
+def die(message: str) -> None:
     output_error(message)
     sys.exit(1)
 
-def set_debug(dbg):
+def set_debug(dbg: bool) -> None:
     global DEBUG
     DEBUG = dbg
 
-def log(s):
+def log(s: str) -> None:
     print(s, file=sys.stderr)
 
-def log_warning(s):
+def log_warning(s: str) -> None:
     log("WARNING: {}".format(s))
 
-def log_note(s):
+def log_note(s: str) -> None:
     log(s)
 
-def log_debug(s):
+def log_debug(s: str) -> None:
     if DEBUG:
         log(s)
 
-def serialize_sexp(s):
+# ----------------------------------------------------------------------
+# S-expressions ("SExp")
+
+SExp: TypeAlias = Union[str, list['SExp']]
+
+def serialize_sexp(s: SExp) -> str:
     if isinstance(s, str):
         return s
     else:
@@ -102,11 +108,11 @@ class IncrementalSExpParser(object):
         "paren_depth",
         "byte_decoder")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.reset()
 
-    def reset(self):
-        self.incomplete_sexp = []
+    def reset(self) -> None:
+        self.incomplete_sexp: list[list[SExp]] = []
         self.incomplete_atom = ""
         self.in_comment = False
         self.in_string = False
@@ -114,7 +120,7 @@ class IncrementalSExpParser(object):
         self.paren_depth = 0
         self.byte_decoder = codecs.getincrementaldecoder(SMTLIB_CHARSET)()
 
-    def feed(self, text_bytes):
+    def feed(self, text_bytes: bytes) -> list[SExp]:
         """
         Feed the given bytes to this parser, and return S-expressions found.
 
@@ -123,7 +129,7 @@ class IncrementalSExpParser(object):
         """
         return list(self._feed(text_bytes))
 
-    def feed_eof(self):
+    def feed_eof(self) -> list[SExp]:
         undecoded_bytes, _ = self.byte_decoder.getstate()
         if undecoded_bytes:
             raise Exception("premature EOF (did the input end with half of a multi-byte character?)")
@@ -138,7 +144,8 @@ class IncrementalSExpParser(object):
         else:
             return []
 
-    def _finish(self):
+    def _finish(self) -> SExp:
+        result: SExp
         if self.incomplete_sexp:
             result, = self.incomplete_sexp
         else:
@@ -146,7 +153,7 @@ class IncrementalSExpParser(object):
         self.reset()
         return result
 
-    def _end_atom_or_string(self):
+    def _end_atom_or_string(self) -> Iterable[SExp]:
         if self.in_string_after_double_quote:
             self.incomplete_atom += '"'
             self.in_string_after_double_quote = False
@@ -158,7 +165,7 @@ class IncrementalSExpParser(object):
             yield self._finish()
         assert not self.incomplete_atom
 
-    def _feed(self, text_bytes):
+    def _feed(self, text_bytes: bytes) -> Iterable[SExp]:
         for c in self.byte_decoder.decode(text_bytes):
 
             if self.in_comment:
@@ -204,31 +211,31 @@ class IncrementalSExpParser(object):
             else:
                 self.incomplete_atom += c
 
-def is_check_sat(sexp):
+def is_check_sat(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] in ("check-sat", "check-sat-assuming")
 
-def is_inspect_command(sexp):
+def is_inspect_command(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] in ("get-value", "get-assignment", "get-model", "get-unsat-assumptions", "get-proof", "get-unsat-core")
 
-def is_echo(sexp):
+def is_echo(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) == 2 and sexp[0] == "echo"
 
-def is_set_option(sexp):
+def is_set_option(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) == 3 and sexp[0] == "set-option"
 
-def is_get_info(sexp):
+def is_get_info(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) > 1 and sexp[0] == "get-info"
 
-def is_get_assertions(sexp):
+def is_get_assertions(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "get-assertions"
 
-def is_reset(sexp):
+def is_reset(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "reset"
 
-def is_exit(sexp):
+def is_exit(sexp: SExp) -> bool:
     return isinstance(sexp, list) and len(sexp) == 1 and sexp[0] == "exit"
 
-def is_error(sexp):
+def is_error(sexp: SExp) -> bool:
     # NOTE: when CVC4 crashes, it outputs "error" instead of "(error ...)".
     return sexp == "error" or (isinstance(sexp, list) and len(sexp) >= 1 and sexp[0] == "error")
 
@@ -236,42 +243,44 @@ def is_error(sexp):
 # Solver processes
 
 class SolverProcess(object):
-    def __init__(self, args):
+    def __init__(self, args: Sequence[str]) -> None:
         self.alive = False
         self.args = args
         self.re_open()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.args[0]
 
-    def close(self):
+    def close(self) -> None:
         # NOTE: if Popen throws an exception, self.proc is never set.
         if self.alive and hasattr(self, "proc"):
             log_debug("Stopping {}".format(self))
             self.proc.kill()
             self.alive = False
-            self.inbox = None
+            self.inbox: Optional[IncrementalSExpParser] = None
 
-    def re_open(self):
+    def re_open(self) -> None:
         assert not self.alive
         self.alive = True
         self.proc = subprocess.Popen(self.args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
         self.inbox = IncrementalSExpParser()
 
-    def send(self, cmd):
+    def send(self, cmd: str) -> None:
         if self.alive:
+            proc_stdin = self.proc.stdin
+            assert proc_stdin is not None # opened with stdin=PIPE
             try:
                 log_debug("{} <-- {!r}".format(self, cmd))
                 cmd_bytes = cmd.encode(SMTLIB_CHARSET)
                 written = 0
                 while written < len(cmd_bytes):
-                    written += self.proc.stdin.write(cmd_bytes[written:])
-                self.proc.stdin.flush()
+                    written += proc_stdin.write(cmd_bytes[written:])
+                proc_stdin.flush()
             except Exception as e:
                 log_warning("Error while writing to {}: {}".format(self, e))
                 self.close()
 
-    def abort_check_sat(self, commands_so_far):
+    def abort_check_sat(self, commands_so_far: Sequence[str]) -> None:
         log_debug("Aborting {} (check-sat)".format(self))
         self.close()
 
@@ -290,13 +299,16 @@ class SolverProcess(object):
             log_warning("Error from {} while replaying commands after abort: {}".format(self, e))
             self.close()
 
-    def make_read_progress(self):
+    def make_read_progress(self) -> Iterable[SExp]:
         if not self.alive:
             log_warning("Tried to read from dead solver {}".format(self))
             yield "error"
             return
+        assert self.inbox is not None # non-none when self.alive
+        proc_stdout = self.proc.stdout
+        assert proc_stdout is not None # opened with stdout=PIPE
         try:
-            block = self.proc.stdout.read(BUFFER_SIZE)
+            block = proc_stdout.read(BUFFER_SIZE)
             if block:
                 for out in self.inbox.feed(block):
                     log_debug("{} --> {!r}".format(self, out))
@@ -308,7 +320,7 @@ class SolverProcess(object):
             log_warning("Error while reading from {}: {}".format(self, e))
             self.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
 DEFAULT_SOLVERS = [
@@ -321,7 +333,7 @@ DEFAULT_SOLVERS = [
 # ----------------------------------------------------------------------
 # Batch commands for interacting with multiple solvers
 
-def next_response(solvers):
+def next_response(solvers: Sequence[SolverProcess]) -> Tuple[SolverProcess, SExp]:
     """
     Returns the first complete S-expression output by any of the given solvers.
 
@@ -329,7 +341,9 @@ def next_response(solvers):
     """
     with selectors.DefaultSelector() as sel:
         for s in solvers:
-            sel.register(s.proc.stdout, selectors.EVENT_READ, data=s)
+            stdout = s.proc.stdout
+            assert stdout is not None # opened with stdout=PIPE
+            sel.register(stdout, selectors.EVENT_READ, data=s)
         while True:
             log_debug("Waiting [next_response]...")
             for selectkey, events in sel.select():
@@ -337,7 +351,7 @@ def next_response(solvers):
                 for res in solver.make_read_progress():
                     return (solver, res)
 
-def sync(solvers):
+def sync(solvers: Sequence[SolverProcess]) -> None:
     """
     Wait until all the given solvers output a complete S-expression.
 
@@ -346,7 +360,9 @@ def sync(solvers):
     n = len(solvers)
     with selectors.DefaultSelector() as sel:
         for s in solvers:
-            sel.register(s.proc.stdout, selectors.EVENT_READ, data=s)
+            stdout = s.proc.stdout
+            assert stdout is not None # opened with stdout=PIPE
+            sel.register(   stdout, selectors.EVENT_READ, data=s)
         while n > 0:
             log_debug("Waiting [sync]...")
             for selectkey, events in sel.select():
@@ -370,6 +386,8 @@ def sync(solvers):
 class ManySMT(object):
 
     __slots__ = (
+        "all_solvers",
+
         "living_solvers",
 
         # Solver with a staisfying model.
@@ -385,13 +403,15 @@ class ManySMT(object):
         "print_success",
     )
 
-    def __init__(self):
-        self.living_solvers = []
-        self.satisfied_solver = None
-        self.commands_so_far = []
-        self.print_success = True
+    def __init__(self) -> None:
+        self.all_solvers: list[list[str]] = []
+        self.living_solvers: list[SolverProcess] = []
+        self.satisfied_solver: Optional[SolverProcess] = None
+        self.commands_so_far: list[str] = []
+        self.print_success: bool = True
 
-    def start(self, solvers_to_spawn):
+    def start(self, solvers_to_spawn: Sequence[Sequence[str]]) -> None:
+        self.all_solvers = [list(argv) for argv in solvers_to_spawn]
         solvers = self.living_solvers
         assert not solvers
 
@@ -412,14 +432,14 @@ class ManySMT(object):
         self.commands_so_far = list(INIT_COMMANDS)
         self.print_success = True
 
-    def close(self):
+    def close(self) -> None:
         if hasattr(self, "living_solvers"):
             solvers = self.living_solvers
             for s in solvers:
                 s.close()
             solvers.clear()
 
-    def exec(self, sexp):
+    def exec(self, sexp: SExp) -> None:
         solvers = self.living_solvers = [s for s in self.living_solvers if s.alive]
 
         log_debug("Next command is {!r} [check_sat={}, inspect={}]".format(sexp, is_check_sat(sexp), is_inspect_command(sexp)))
@@ -457,7 +477,7 @@ class ManySMT(object):
                     solver.close()
                 elif res != "unknown":
                     got_output = True
-                    emit_output(res)
+                    emit_output(serialize_sexp(res))
                     if res == "sat":
                         self.satisfied_solver = solver
                     break
@@ -529,7 +549,7 @@ class ManySMT(object):
             # the :print-success option.  Handling such a disagreement would involve a lot of
             # special-casing, so we'll just take the simple approach above instead.
             self.close()
-            self.start()
+            self.start(self.all_solvers)
             self.print_success_if_necessary()
         else:
             for s in solvers:
@@ -542,14 +562,14 @@ class ManySMT(object):
             else:
                 die("No solvers are available")
 
-    def print_success_if_necessary(self):
+    def print_success_if_necessary(self) -> None:
         if self.print_success:
             emit_output("success")
 
 # ----------------------------------------------------------------------
 # Program entry point
 
-def run(argv):
+def run(argv: Sequence[str]) -> None:
     p = argparse.ArgumentParser(description='Run multiple SMT solvers in parallel.')
     p.add_argument("-i", "--info",
         help="Show information about configuration and available solvers, then exit.  "
@@ -577,7 +597,7 @@ def run(argv):
         solvers.append(shlex.split(s))
 
     # Incremental parser for input commands.
-    p = IncrementalSExpParser()
+    sp = IncrementalSExpParser()
     stdin_unbuffered = io.open(sys.stdin.fileno(), 'rb', closefd=False, buffering=0)
 
     smt = ManySMT()
@@ -595,7 +615,7 @@ def run(argv):
                 block = stdin_unbuffered.read(1024)
                 log_debug("Read {} bytes from stdin".format(len(block)))
 
-                for sexp in (p.feed(block) if block else p.feed_eof()):
+                for sexp in (sp.feed(block) if block else sp.feed_eof()):
                     smt.exec(sexp)
 
                 if not block:
