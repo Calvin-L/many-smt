@@ -7,8 +7,11 @@ stdout.
 Currently, Many-SMT knows how to use
 [Boolector](https://boolector.github.io/),
 [CVC4](https://cvc4.github.io/),
+[CVC5](https://cvc5.github.io/),
 [Yices](https://yices.csl.sri.com/), and
 [Z3](https://github.com/Z3Prover/z3).
+It can be extended with additional solvers using environment variables; run
+with `--doc` for extended documentation on how.
 
 Pull requests are welcome!
 
@@ -24,11 +27,11 @@ directly out of this folder:
 
 Or install it by copying it to a folder on your PATH.
 
-For a quick usage summary, pass "--help":
+For a quick usage summary, pass `--help`:
 
     ./many-smt --help
 
-For extended documentation, pass "--doc":
+For extended documentation, pass `--doc`:
 
     ./many-smt --doc
 
