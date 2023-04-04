@@ -15,7 +15,7 @@ import shlex
 
 SOLVER_NAME    = "Many-SMT"
 SOLVER_AUTHORS = "Calvin Loncaric"
-SOLVER_VERSION = "1.0.0"
+SOLVER_VERSION = "1.0.1-alpha"
 
 BUFFER_SIZE = 1024
 DEBUG = False
