@@ -5,6 +5,7 @@ import argparse
 import selectors
 import subprocess
 import sys
+import os
 import io
 import codecs
 import shlex
@@ -331,6 +332,16 @@ DEFAULT_SOLVERS = [
     ["z3", "-smt2", "-in"],
 ]
 
+def decode_solvers(config: str) -> list[list[str]]:
+    return [shlex.split(argv) for argv in config.split(";") if argv.strip()]
+
+def encode_solvers(solvers: list[list[str]]) -> str:
+    return "; ".join([" ".join(shlex.quote(a) for a in argv) for argv in solvers])
+
+assert decode_solvers(encode_solvers(DEFAULT_SOLVERS)) == DEFAULT_SOLVERS
+assert decode_solvers(";s1 'arg1';;s2;") == [["s1", "arg1"], ["s2"]]
+assert decode_solvers(" ") == []
+
 # ----------------------------------------------------------------------
 # Batch commands for interacting with multiple solvers
 
@@ -577,25 +588,15 @@ def run(argv: Sequence[str]) -> None:
              "In this mode ManySMT ignores stdin and pretends as if its input was simply "
              "'(get-info :all-statistics)'.",
         action="store_true")
-    p.add_argument("--default-solvers",
-        help="Enable or disable the default set of solvers ({})".format(", ".join([s[0] for s in DEFAULT_SOLVERS])),
-        default=True,
-        action=argparse.BooleanOptionalAction)
-    p.add_argument("-s", "--with-solver",
-        help="Additionally spawn the given solver.  The argument should be a program "
-             "that, when spawned, reads SMT-LIB input on stdin and writes SMT-LIB output "
-             "to stdout, e.g. 'z3 -smt2 -in'.",
-        metavar="PROGRAM",
-        action="append")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args(argv)
 
     if args.debug:
         set_debug(True)
 
-    solvers = list(DEFAULT_SOLVERS) if args.default_solvers else []
-    for s in args.with_solver or ():
-        solvers.append(shlex.split(s))
+    solvers = decode_solvers(";".join([
+        os.getenv("MANYSMT_SOLVERS", encode_solvers(DEFAULT_SOLVERS)),
+        os.getenv("MANYSMT_EXTRA_SOLVERS", "")]))
 
     # Incremental parser for input commands.
     sp = IncrementalSExpParser()

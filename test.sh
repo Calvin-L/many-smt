@@ -2,6 +2,8 @@
 
 cd "$(dirname "$0")"
 export PATH="$(pwd):$PATH"
+unset MANYSMT_SOLVERS
+unset MANYSMT_EXTRA_SOLVERS
 
 N=0
 PASS=0
