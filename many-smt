@@ -581,15 +581,88 @@ class ManySMT(object):
 # ----------------------------------------------------------------------
 # Program entry point
 
-def run(argv: Sequence[str]) -> None:
+DOC = """
+DEFAULT SOLVERS
+
+  Many-SMT is configured to try spawning these solvers by default:
+
+{default_solvers}
+
+USING ADDITIONAL CUSTOM SOLVERS
+
+  Many-SMT reads the environment variable `MANYSMT_EXTRA_SOLVERS` to discover
+  additional solvers to call and what arguments to pass them.  It should be a
+  semicolon-separated list of argument lines, each of which is a
+  whitespace-separated list of arguments.  For example:
+
+    MANYSMT_EXTRA_SOLVERS={example_MANYSMT_SOLVERS}
+
+  Solvers should read SMT-LIB input on stdin and write output to stdout.  For
+  Many-SMT to function, each solver MUST properly support the SMT-LIB command
+  `(set-option :print-success true)`.
+
+CHANGING THE DEFAULT SET OF SOLVERS
+
+  Many-SMT quietly skips solvers it can't start, so there is usually no reason
+  to disable its defaults.  However, in the unlikely event that that it is
+  necessary, the environment variable `MANYSMT_SOLVERS` can be used to override
+  the default solvers.  If that environment variable is not set, then Many-SMT
+  uses the default set of solvers.  If it is empty, then Many-SMT does not use
+  any solvers.
+
+  Many-SMT always includes the solvers from both MANYSMT_SOLVERS and
+  MANYSMT_EXTRA_SOLVERS, so to specify an exact set of solvers both environment
+  variables must be overridden.
+
+A QUICK NOTE ON ENVIRONMENT VARIABLES AND TOOL DESIGN
+
+  For Many-SMT, environment variables are preferable to command-line flags.
+  The reason is that Many-SMT will generally be used indirectly:
+
+    User <--> Useful Tool <--> Many-SMT (optional) <--> Solver(s)
+
+  Environment variables are a simple way to plumb information from the user to
+  Many-SMT without requiring the intermediate Useful Tool to take additional
+  configuration options.  If I set `MANYSMT_EXTRA_SOLVERS`, I can expect any
+  tool built on Many-SMT to benefit from the extra solvers.
+
+  Well-written tools that use Many-SMT should take one of three approaches:
+
+    (1) Take no action.  Environment variables directly affect Many-SMT.  This
+        is the simplest strategy and the one I would recommend.
+
+    (2) Override `MANYSMT_SOLVERS` with a minimum set of defaults.  The
+        defaults should either ship with your tool or be checked at build
+        time.  Allow `MANYSMT_EXTRA_SOLVERS` to extend your tool.
+
+    (3) Override both `MANYSMT_SOLVERS` and `MANYSMT_EXTRA_SOLVERS`.  In this
+        case the tool should provide documented configuration options for
+        controlling the underlying solvers (unless there is a very good reason
+        not to do so---I can't imagine one, but that doesn't mean there isn't
+        one).
+""".format(
+    default_solvers="\n".join(["    " + " ".join(argv) for argv in DEFAULT_SOLVERS]) if DEFAULT_SOLVERS else "    N/A",
+    example_MANYSMT_SOLVERS=shlex.quote(encode_solvers(DEFAULT_SOLVERS[:2])))
+
+def run(argv: Sequence[str]) -> int:
     p = argparse.ArgumentParser(description='Run multiple SMT solvers in parallel.')
+    p.add_argument("--doc",
+        help="show extended documentation and exit",
+        action="store_true")
     p.add_argument("-i", "--info",
         help="Show information about configuration and available solvers, then exit.  "
-             "In this mode ManySMT ignores stdin and pretends as if its input was simply "
+             "In this mode Many-SMT ignores stdin and pretends as if its input was simply "
              "'(get-info :all-statistics)'.",
         action="store_true")
-    p.add_argument("--debug", action="store_true")
+    p.add_argument("--debug",
+        help="print verbose information on stderr",
+        action="store_true")
     args = p.parse_args(argv)
+
+    if args.doc:
+        p.print_help()
+        print(DOC)
+        return 0
 
     if args.debug:
         set_debug(True)
@@ -630,5 +703,7 @@ def run(argv: Sequence[str]) -> None:
     finally:
         smt.close()
 
+    return 0
+
 if __name__ == "__main__":
-    run(sys.argv[1:])
+    sys.exit(run(sys.argv[1:]))

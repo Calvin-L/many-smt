@@ -24,6 +24,14 @@ directly out of this folder:
 
 Or install it by copying it to a folder on your PATH.
 
+For a quick usage summary, pass "--help":
+
+    ./many-smt --help
+
+For extended documentation, pass "--doc":
+
+    ./many-smt --doc
+
 ## Details and Caveats
 
 On startup, Many-SMT spawns multiple solver processes.  Using separate
