@@ -80,3 +80,6 @@ idea, but does not seem to be publicly available.
 [Poolector](https://github.com/Boolector/boolector/blob/ad16fd1b47fdce57cc55ca5f1b2f4f7c95b2f631/contrib/poolector.py)
 is exactly the same idea, but only runs instances of the Boolector solver and
 does not support interaction.
+
+[PySMT](https://github.com/pysmt/pysmt) can invoke multiple solvers in parallel
+(see "portfolio solving").
