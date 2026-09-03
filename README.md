@@ -1,8 +1,8 @@
 # Many-SMT
 This is an [SMT-LIB](http://smtlib.cs.uiowa.edu/) frontend that runs multiple
-backend solvers in parallel, returning the first result.  Like an ordinary
-SMT-LIB solver, it accepts SMT-LIB v2.6 input on stdin and writes output to
-stdout.
+backend solvers in parallel, returning the first result ("portfolio solving").
+Like an ordinary SMT-LIB solver, it accepts SMT-LIB v2.6 input on stdin and
+writes output to stdout.
 
 Currently, Many-SMT knows how to use
 [Boolector](https://boolector.github.io/),
@@ -83,3 +83,6 @@ does not support interaction.
 
 [PySMT](https://github.com/pysmt/pysmt) can invoke multiple solvers in parallel
 (see "portfolio solving").
+
+[Vampire](https://vprover.github.io) can try different strategies in parallel
+(see docs for `--mode casc`).
