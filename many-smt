@@ -609,8 +609,9 @@ USING ADDITIONAL CUSTOM SOLVERS
     MANYSMT_EXTRA_SOLVERS={example_MANYSMT_SOLVERS}
 
   Solvers should read SMT-LIB input on stdin and write output to stdout.  For
-  Many-SMT to function, each solver MUST properly support the SMT-LIB command
-  `(set-option :print-success true)`.
+  Many-SMT to function, each solver MUST support
+    - the SMT-LIB command `(set-option :print-success true)`
+    - command-by-command incremental I/O.
 
 CHANGING THE DEFAULT SET OF SOLVERS
 
