@@ -8,7 +8,8 @@ unset MANYSMT_EXTRA_SOLVERS
 N=0
 PASS=0
 
-for f in ./tests/*.sh; do
+cd tests
+for f in *.sh; do
     let N=N+1
     echo -n "$f... "
     bash "$f" >"$f.log" 2>&1
