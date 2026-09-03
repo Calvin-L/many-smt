@@ -13,7 +13,7 @@ unsupported
 (:authors "Calvin Loncaric")
 (:error-behavior immediate-exit)
 (:name "Many-SMT")
-(:version "??.??.??")
+(:version "1.0.1-alpha")
 EOF)"
 
 echo "$OUT"
