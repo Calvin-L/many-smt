@@ -85,6 +85,10 @@ def log_debug(s: str) -> None:
     if DEBUG:
         log(s)
 
+class MalformedInput(Exception):
+    def __init__(self, msg: str) -> None:
+        super().__init__(msg)
+
 # ----------------------------------------------------------------------
 # S-expressions ("SExp")
 
@@ -107,9 +111,11 @@ class IncrementalSExpParser(object):
         "in_string",
         "in_string_after_double_quote",
         "paren_depth",
-        "byte_decoder")
+        "byte_decoder",
+        "line_number")
 
     def __init__(self) -> None:
+        self.line_number = 1
         self.reset()
 
     def reset(self) -> None:
@@ -133,15 +139,15 @@ class IncrementalSExpParser(object):
     def feed_eof(self) -> list[SExp]:
         undecoded_bytes, _ = self.byte_decoder.getstate()
         if undecoded_bytes:
-            raise Exception("premature EOF (did the input end with half of a multi-byte character?)")
+            raise MalformedInput("premature EOF (did the input end with half of a multi-byte character?)")
         if self.incomplete_atom:
             if self.in_string_after_double_quote:
                 self.incomplete_atom += '"'
             return [self._finish()]
         elif self.in_string:
-            raise Exception("unclosed double-quote")
+            raise MalformedInput("unclosed double-quote")
         elif self.paren_depth > 0:
-            raise Exception("unclosed parentheses [depth={}, incomplete_sexp={!r}, incomplete_atom={!r}]".format(self.paren_depth, self.incomplete_sexp, self.incomplete_atom))
+            raise MalformedInput("unclosed parentheses [depth={}, incomplete_sexp={!r}, incomplete_atom={!r}]".format(self.paren_depth, self.incomplete_sexp, self.incomplete_atom))
         else:
             return []
 
@@ -172,6 +178,7 @@ class IncrementalSExpParser(object):
             if self.in_comment:
                 if c == "\n":
                     self.in_comment = False
+                    self.line_number += 1
                 continue
             elif c == '"':
                 if self.in_string_after_double_quote:
@@ -204,11 +211,15 @@ class IncrementalSExpParser(object):
                 self.paren_depth -= 1
                 if self.paren_depth == 0:
                     yield self._finish()
-                else:
+                elif self.paren_depth > 0:
                     self.incomplete_sexp[-2].append(self.incomplete_sexp[-1])
                     self.incomplete_sexp.pop()
+                else:
+                    raise MalformedInput("Extra ')' on line {}".format(self.line_number))
             elif c in " \t\r\n":
                 yield from self._end_atom_or_string()
+                if c == "\n":
+                    self.line_number += 1
             else:
                 self.incomplete_atom += c
 
@@ -699,6 +710,10 @@ def run(argv: Sequence[str]) -> int:
 
     except KeyboardInterrupt:
         pass
+
+    except MalformedInput as exn:
+        output_error(str(exn))
+        return 1
 
     finally:
         smt.close()
