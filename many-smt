@@ -657,7 +657,7 @@ A QUICK NOTE ON ENVIRONMENT VARIABLES AND TOOL DESIGN
     example_MANYSMT_SOLVERS=shlex.quote(encode_solvers(DEFAULT_SOLVERS[:2])))
 
 def run(argv: Sequence[str]) -> int:
-    p = argparse.ArgumentParser(description='Run multiple SMT solvers in parallel.')
+    p = argparse.ArgumentParser(description='Takes SMT-LIB input via stdin, runs multiple SMT solvers in parallel.')
     p.add_argument("--doc",
         help="show extended documentation and exit",
         action="store_true")
